@@ -1,0 +1,5 @@
+gcc server_twocopy.c -o server_twocopy -pthread
+gcc server_onecopy.c -o server_onecopy -pthread
+gcc server_zerocopy.c -o server_zerocopy -pthread
+gcc client.c -o client
+
