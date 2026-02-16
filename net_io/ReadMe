@@ -1,41 +1,27 @@
 Network I/O Data Movement Analysis
+
 Two-Copy vs One-Copy vs Zero-Copy Socket Communication
 1. Objective
 
 The objective of this assignment is to experimentally study the cost of data movement in TCP network I/O by implementing and comparing three socket communication techniques:
-
 Two-copy socket communication (baseline)
-
 One-copy optimized socket communication
-
 Zero-copy socket communication
-
 The study focuses on understanding:
-
 User ↔ kernel data copies
-
 CPU utilization and cache effects
-
 Kernel behavior during network transmission
-
 Performance impact under multithreaded client–server workloads
 
 2. Experimental Overview
 
 We implement multithreaded TCP client–server applications in C and compare how data is transferred from server to client under different I/O mechanisms.
-
 Key Characteristics
-
 TCP-based communication
-
 Server supports multiple concurrent clients
-
 One thread per client on the server
-
 Fixed-size messages sent repeatedly
-
 Client continuously receives data for a fixed duration
-
 Message size and runtime are parameterized
 
 3. Directory Structure
@@ -50,37 +36,25 @@ net_io/
 4. Message Structure
 
 Each message sent by the server consists of:
-
 8 dynamically allocated string fields
-
 Each field allocated on the heap using malloc
-
 Simulates realistic application-layer payloads
-
 typedef struct {
     char *field[8];
     size_t len[8];
 } message_t;
 
-
 This design ensures:
-
 Non-contiguous memory layout
-
 Realistic data movement costs
-
 Meaningful cache and memory effects
 
 5. Common Server Design (All Versions)
 
 Creates a TCP socket and listens on a specified port
-
 Accepts multiple clients concurrently
-
 Spawns one thread per client
-
 Each thread repeatedly sends messages to its client
-
 Server
  ├── Accept client
  ├── Create thread
@@ -90,93 +64,63 @@ Server
 6. Common Client Design
 
 Connects to server using TCP
-
 Continuously receives data for a fixed duration
-
 Used to measure throughput, CPU usage, and cache behavior
 
 7. A1 – Two-Copy Implementation (Baseline)
+
 Implementation
-
 Uses standard send() / recv() socket primitives
-
 Data Movement Path
-
 User buffer → kernel socket buffer
-
 Kernel socket buffer → NIC (DMA)
-
 NIC → kernel socket buffer (receiver)
-
 Kernel socket buffer → user buffer
-
 Although called two-copy, there are actually two CPU-mediated copies (user ↔ kernel), plus DMA transfers.
-
 Characteristics
-
 Highest CPU overhead
-
 High cache pollution
-
 Baseline for comparison
 
 8. A2 – One-Copy Implementation
+
 Implementation
-
 Uses sendmsg() with struct iovec (scatter-gather I/O)
-
 Key Optimization
-
 Eliminates the need to copy scattered user buffers into a temporary contiguous kernel buffer
-
 Kernel directly gathers data from user buffers
-
 Remaining Copies
-
 One user → kernel copy
-
 Kernel → NIC via DMA
-
 Benefits
-
 Reduced memory copying
-
 Lower CPU cycles than baseline
-
 Improved cache behavior
 
 9. A3 – Zero-Copy Implementation
+
 Implementation
-
 Uses sendmsg() with the MSG_ZEROCOPY flag
-
 Requires Linux kernel ≥ 4.14
-
 Kernel Behavior
-
 User memory pages are pinned
-
 NIC performs DMA directly from user memory
-
 No CPU-mediated data copy
-
 Kernel tracks completion asynchronously
-
 Characteristics
-
 Minimal CPU overhead for large payloads
-
 Reduced cache misses
-
 Best suited for large message sizes
 
 10. Comparison Summary
+
 Feature	Two-Copy	One-Copy	Zero-Copy
 CPU data copies	2	1	0
 Kernel buffering	Full	Reduced	None
 Cache pollution	High	Medium	Low
 Implementation complexity	Low	Medium	High
 Best use case	Baseline	Optimized send	Large payloads
+
 11. Compilation Instructions
 
 Run the following commands inside the project directory:
@@ -187,73 +131,55 @@ gcc server_zerocopy.c -o server_zerocopy -pthread
 gcc client.c -o client
 
 12. Running the Programs
+
 Terminal 1 – Start the Server
 
 Choose one server implementation:
-
 ./server_twocopy 9000
-
-
 or
-
 ./server_onecopy 9000
-
-
 or
-
 ./server_zerocopy 9000
 
 Terminal 2 – Run the Client
 ./client 127.0.0.1 9000 10
 
-
 127.0.0.1 → server IP
-
 9000 → server port
-
 10 → run duration in seconds
 
 13. Performance Measurement (Optional but Recommended)
+
 CPU utilization
 top
-
 CPU cycles and cache behavior
 perf stat -e cycles,cache-misses ./client 127.0.0.1 9000 10
 
 14. Expected Observations
 
 Two-copy: highest CPU usage and cache misses
-
 One-copy: reduced CPU cycles and better cache locality
-
 Zero-copy: lowest CPU overhead for large messages
-
 Zero-copy benefits diminish for small payload sizes due to kernel bookkeeping overhead
 
 15. Key Learning Outcomes
 
 This assignment demonstrates:
-
 How data moves between user space, kernel, and hardware
-
 Why memory copies dominate network I/O costs
-
 The role of DMA and page pinning
-
 When zero-copy techniques are beneficial
-
 Trade-offs between simplicity and performance
 
 16. Notes and Limitations
 
 MSG_ZEROCOPY requires modern Linux kernels
-
 Zero-copy is most effective for large, long-lived buffers
-
 Loopback and VM-only setups may hide NIC-level effects
-
 Error handling and cleanup are minimal for clarity
 
 17. Conclusion
 
-This project provides a practical understanding of network I/O data movement costs. By progressively reducing memory copies—from two-copy to zero-copy—we observe clear reductions in CPU usage and cache pressure, validating textbook OS and networking principles through real measurements.
+This project provides a practical understanding of network I/O data movement costs. 
+By progressively reducing memory copies—from two-copy to zero-copy—we observe clear reductions in CPU usage and cache pressure, 
+validating textbook OS and networking principles through real measurements.
