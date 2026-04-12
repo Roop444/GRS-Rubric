@@ -103,6 +103,7 @@ static int check_nfs4_acl(const char *user, const char *path, char op) {
     pclose(fp);
     return allow;
 }
+
 int main(int argc, char *argv[]) {
     if (argc != 4)
         usage(argv[0]);
