@@ -61,36 +61,36 @@ static int check_nfs4_acl(struct passwd *pw, const char *path, char op) {
 
     while (fgets(line, sizeof(line), fp)) {
         line[strcspn(line, "\n")] = 0;
-    
+
         // 🔥 FIX: trim leading spaces
         char *l = line;
         while (*l == ' ' || *l == '\t')
             l++;
 
         // Skip comments
-        if (line[0] == '#')
+        if (*l == '#' || *l == '\0')
             continue;
 
         char name[64], perms[64], flags[64], type[64];
 
         // user:bob:rwx------:-------:allow
-        if (sscanf(line, "user:%63[^:]:%63[^:]:%63[^:]:%63s",
+        if (sscanf(l, "user:%63[^:]:%63[^:]:%63[^:]:%63s",
                    name, perms, flags, type) == 4) {
 
             if (strncmp(name, pw->pw_name, strlen(pw->pw_name)) != 0)
                 continue;
         }
         // group@:rwx------:-------:allow
-        else if (sscanf(line, "group@:%63[^:]:%63[^:]:%63s",
+        else if (sscanf(l, "group@:%63[^:]:%63[^:]:%63s",
                         perms, flags, type) == 3) {
 
             if (pw->pw_gid != st.st_gid)
                 continue;
         }
         // everyone@:rwx------:-------:allow
-        else if (sscanf(line, "everyone@:%63[^:]:%63[^:]:%63s",
+        else if (sscanf(l, "everyone@:%63[^:]:%63[^:]:%63s",
                         perms, flags, type) == 3) {
-            // always applies
+            // applies to all
         }
         else {
             continue;
