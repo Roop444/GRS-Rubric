@@ -13,8 +13,33 @@ static void usage(const char *p) {
 }
 
 /*
+ * Check directory traversal (execute permission on all parent dirs)
+ */
+static int check_traversal(const char *path) {
+    char tmp[PATH_MAX];
+    strncpy(tmp, path, sizeof(tmp));
+    tmp[sizeof(tmp) - 1] = '\0';
+
+    char *p = tmp;
+
+    while ((p = strchr(p + 1, '/')) != NULL) {
+        *p = '\0';
+
+        struct stat st;
+        if (stat(tmp, &st) == 0) {
+            if (!(st.st_mode & S_IXOTH)) {
+                return 0; // traversal denied
+            }
+        }
+
+        *p = '/';
+    }
+
+    return 1;
+}
+
+/*
  * Check basic UNIX permission bits
- * (Used only if ACLs do not grant access)
  */
 static int check_mode_bits(uid_t uid, gid_t gid, struct stat *st, char op) {
     if (uid == st->st_uid) {
@@ -37,11 +62,8 @@ static int check_mode_bits(uid_t uid, gid_t gid, struct stat *st, char op) {
 }
 
 /*
- * Very conservative NFSv4 ACL reasoning:
- * - If any DENY exists for the user → deny
- * - If an explicit ALLOW exists → allow
+ * NFSv4 ACL reasoning (improved)
  */
-
 static int check_nfs4_acl(const char *user, const char *path, char op) {
     char cmd[PATH_MAX + 64];
     snprintf(cmd, sizeof(cmd), "getfacl %s 2>/dev/null", path);
@@ -54,39 +76,32 @@ static int check_nfs4_acl(const char *user, const char *path, char op) {
     int allow = 0;
 
     while (fgets(line, sizeof(line), fp)) {
-
-        // Normalize line (remove newline)
         line[strcspn(line, "\n")] = 0;
-
-        // Check relevant ACEs:
-        // user:bob OR user:bob@
-        // OR everyone@
 
         int is_target = 0;
 
-        if (strstr(line, "user:")) {
-            if (strstr(line, user))
-                is_target = 1;
-        }
-
-        if (strstr(line, "everyone@")) {
+        // Match user:bob or user:bob@
+        if (strstr(line, "user:") && strstr(line, user))
             is_target = 1;
-        }
+
+        // Match everyone@
+        if (strstr(line, "everyone@"))
+            is_target = 1;
 
         if (!is_target)
             continue;
 
-        // DENY check (highest priority)
+        // DENY first
         if (strstr(line, "deny")) {
             if ((op == 'r' && strchr(line, 'r')) ||
                 (op == 'w' && strchr(line, 'w')) ||
                 (op == 'x' && strchr(line, 'x'))) {
                 pclose(fp);
-                return 0;  // DENY immediately
+                return 0;
             }
         }
 
-        // ALLOW check
+        // ALLOW
         if (strstr(line, "allow")) {
             if ((op == 'r' && strchr(line, 'r')) ||
                 (op == 'w' && strchr(line, 'w')) ||
@@ -118,6 +133,12 @@ int main(int argc, char *argv[]) {
     if (!pw) {
         fprintf(stderr, "Unknown user\n");
         return 1;
+    }
+
+    // ✅ NEW: traversal check
+    if (!check_traversal(path)) {
+        printf("Prediction: DENY (directory traversal)\n");
+        return 0;
     }
 
     struct stat st;
