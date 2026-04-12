@@ -14,7 +14,6 @@ static void usage(const char *p) {
 
 /*
  * Check basic UNIX permission bits
- * (Used only if ACLs do not grant access)
  */
 static int check_mode_bits(uid_t uid, gid_t gid, struct stat *st, char op) {
     if (uid == st->st_uid) {
@@ -37,9 +36,11 @@ static int check_mode_bits(uid_t uid, gid_t gid, struct stat *st, char op) {
 }
 
 /*
- * Very conservative NFSv4 ACL reasoning:
- * - If any DENY exists for the user → deny
- * - If an explicit ALLOW exists → allow
+ * NFSv4 ACL reasoning (correct parsing + logic)
+ * Returns:
+ *   1  → ALLOW
+ *   0  → DENY
+ *  -1  → NO MATCH (fallback to mode bits)
  */
 static int check_nfs4_acl(const char *user, const char *path, char op) {
     char cmd[PATH_MAX + 64];
@@ -55,31 +56,29 @@ static int check_nfs4_acl(const char *user, const char *path, char op) {
     while (fgets(line, sizeof(line), fp)) {
         line[strcspn(line, "\n")] = 0;
 
-        char *saveptr;
-        char *tag = strtok_r(line, ":", &saveptr);
-        char *name = strtok_r(NULL, ":", &saveptr);
-        char *perms = strtok_r(NULL, ":", &saveptr);
-        char *type = strtok_r(NULL, ":", &saveptr);
-
-        if (!tag || !perms || !type)
+        // Skip comments
+        if (line[0] == '#')
             continue;
 
-        int match = 0;
+        char name[64], perms[64], flags[64], type[64];
 
-        // Match user:bob or user:bob@
-        if (strcmp(tag, "user") == 0 && name) {
-            if (strncmp(name, user, strlen(user)) == 0)
-                match = 1;
+        // user:bob:rwx------:-------:allow
+        if (sscanf(line, "user:%63[^:]:%63[^:]:%63[^:]:%63s",
+                   name, perms, flags, type) == 4) {
+
+            if (strncmp(name, user, strlen(user)) != 0)
+                continue;
+        }
+        // everyone@:rwx------:-------:allow
+        else if (sscanf(line, "everyone@:%63[^:]:%63[^:]:%63s",
+                        perms, flags, type) == 3) {
+            // matches everyone@
+        }
+        else {
+            continue;
         }
 
-        // Match everyone@
-        if (strcmp(tag, "everyone@") == 0)
-            match = 1;
-
-        if (!match)
-            continue;
-
-        // ✅ Check permission ONLY in perms field
+        // Check permission ONLY in perms field
         int has_perm = 0;
         if (op == 'r' && strchr(perms, 'r')) has_perm = 1;
         if (op == 'w' && strchr(perms, 'w')) has_perm = 1;
@@ -88,7 +87,7 @@ static int check_nfs4_acl(const char *user, const char *path, char op) {
         if (!has_perm)
             continue;
 
-        // ✅ DENY only if permission matches
+        // DENY takes precedence
         if (strcmp(type, "deny") == 0) {
             pclose(fp);
             return 0;
@@ -101,7 +100,11 @@ static int check_nfs4_acl(const char *user, const char *path, char op) {
     }
 
     pclose(fp);
-    return allow;
+
+    if (allow)
+        return 1;
+
+    return -1;   // no ACL decision
 }
 
 int main(int argc, char *argv[]) {
@@ -131,15 +134,18 @@ int main(int argc, char *argv[]) {
     }
 
     int acl = check_nfs4_acl(user, path, op);
+
     if (acl == 0) {
         printf("Prediction: DENY (ACL deny)\n");
         return 0;
     }
+
     if (acl == 1) {
         printf("Prediction: ALLOW (ACL allow)\n");
         return 0;
     }
 
+    // 🔥 fallback to mode bits
     if (check_mode_bits(pw->pw_uid, pw->pw_gid, &st, op)) {
         printf("Prediction: ALLOW (mode bits)\n");
     } else {
