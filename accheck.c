@@ -78,36 +78,47 @@ static int check_nfs4_acl(const char *user, const char *path, char op) {
     while (fgets(line, sizeof(line), fp)) {
         line[strcspn(line, "\n")] = 0;
 
-        int is_target = 0;
+        char *tag = strtok(line, ":");
+        char *name = strtok(NULL, ":");
+        char *perms = strtok(NULL, ":");
+        char *type = strtok(NULL, ":");
+
+        if (!tag || !name || !perms || !type)
+            continue;
+
+        int match = 0;
 
         // Match user:bob or user:bob@
-        if (strstr(line, "user:") && strstr(line, user))
-            is_target = 1;
+        if (strcmp(tag, "user") == 0) {
+            if (strncmp(name, user, strlen(user)) == 0)
+                match = 1;
+        }
 
         // Match everyone@
-        if (strstr(line, "everyone@"))
-            is_target = 1;
+        if (strcmp(tag, "everyone@") == 0)
+            match = 1;
 
-        if (!is_target)
+        if (!match)
+            continue;
+
+        // Check permission
+        int has_perm = 0;
+        if (op == 'r' && strchr(perms, 'r')) has_perm = 1;
+        if (op == 'w' && strchr(perms, 'w')) has_perm = 1;
+        if (op == 'x' && strchr(perms, 'x')) has_perm = 1;
+
+        if (!has_perm)
             continue;
 
         // DENY first
-        if (strstr(line, "deny")) {
-            if ((op == 'r' && strchr(line, 'r')) ||
-                (op == 'w' && strchr(line, 'w')) ||
-                (op == 'x' && strchr(line, 'x'))) {
-                pclose(fp);
-                return 0;
-            }
+        if (strcmp(type, "deny") == 0) {
+            pclose(fp);
+            return 0;
         }
 
         // ALLOW
-        if (strstr(line, "allow")) {
-            if ((op == 'r' && strchr(line, 'r')) ||
-                (op == 'w' && strchr(line, 'w')) ||
-                (op == 'x' && strchr(line, 'x'))) {
-                allow = 1;
-            }
+        if (strcmp(type, "allow") == 0) {
+            allow = 1;
         }
     }
 
