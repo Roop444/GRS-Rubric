@@ -36,19 +36,25 @@ static int check_mode_bits(uid_t uid, gid_t gid, struct stat *st, char op) {
 }
 
 /*
- * NFSv4 ACL reasoning (correct parsing + logic)
+ * NFSv4 ACL reasoning
  * Returns:
  *   1  → ALLOW
  *   0  → DENY
  *  -1  → NO MATCH (fallback to mode bits)
  */
-static int check_nfs4_acl(const char *user, const char *path, char op) {
+static int check_nfs4_acl(struct passwd *pw, const char *path, char op) {
     char cmd[PATH_MAX + 64];
     snprintf(cmd, sizeof(cmd), "getfacl %s 2>/dev/null", path);
 
     FILE *fp = popen(cmd, "r");
     if (!fp)
         return -1;
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        pclose(fp);
+        return -1;
+    }
 
     char line[512];
     int allow = 0;
@@ -66,13 +72,20 @@ static int check_nfs4_acl(const char *user, const char *path, char op) {
         if (sscanf(line, "user:%63[^:]:%63[^:]:%63[^:]:%63s",
                    name, perms, flags, type) == 4) {
 
-            if (strncmp(name, user, strlen(user)) != 0)
+            if (strncmp(name, pw->pw_name, strlen(pw->pw_name)) != 0)
+                continue;
+        }
+        // group@:rwx------:-------:allow
+        else if (sscanf(line, "group@:%63[^:]:%63[^:]:%63s",
+                        perms, flags, type) == 3) {
+
+            if (pw->pw_gid != st.st_gid)
                 continue;
         }
         // everyone@:rwx------:-------:allow
         else if (sscanf(line, "everyone@:%63[^:]:%63[^:]:%63s",
                         perms, flags, type) == 3) {
-            // matches everyone@
+            // always applies
         }
         else {
             continue;
@@ -133,7 +146,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int acl = check_nfs4_acl(user, path, op);
+    int acl = check_nfs4_acl(pw, path, op);
 
     if (acl == 0) {
         printf("Prediction: DENY (ACL deny)\n");
@@ -145,7 +158,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    // 🔥 fallback to mode bits
+    // fallback to mode bits
     if (check_mode_bits(pw->pw_uid, pw->pw_gid, &st, op)) {
         printf("Prediction: ALLOW (mode bits)\n");
     } else {
