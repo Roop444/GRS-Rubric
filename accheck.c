@@ -61,6 +61,11 @@ static int check_nfs4_acl(struct passwd *pw, const char *path, char op) {
 
     while (fgets(line, sizeof(line), fp)) {
         line[strcspn(line, "\n")] = 0;
+    
+        // 🔥 FIX: trim leading spaces
+        char *l = line;
+        while (*l == ' ' || *l == '\t')
+            l++;
 
         // Skip comments
         if (line[0] == '#')
