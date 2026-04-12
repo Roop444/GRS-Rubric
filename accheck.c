@@ -92,6 +92,14 @@ static int check_nfs4_acl(struct passwd *pw, const char *path, char op) {
                         perms, flags, type) == 3) {
             // applies to all
         }
+
+        // owner@:rwx------:-------:allow
+        else if (sscanf(l, "owner@:%63[^:]:%63[^:]:%63s",
+                        perms, flags, type) == 3) {
+        
+            if (pw->pw_uid != st.st_uid)
+                continue;
+        }
         else {
             continue;
         }
