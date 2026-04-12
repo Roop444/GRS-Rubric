@@ -14,6 +14,7 @@ static void usage(const char *p) {
 
 /*
  * Check basic UNIX permission bits
+ * (Used only if ACLs do not grant access)
  */
 static int check_mode_bits(uid_t uid, gid_t gid, struct stat *st, char op) {
     if (uid == st->st_uid) {
@@ -36,93 +37,44 @@ static int check_mode_bits(uid_t uid, gid_t gid, struct stat *st, char op) {
 }
 
 /*
- * NFSv4 ACL reasoning
- * Returns:
- *   1  → ALLOW
- *   0  → DENY
- *  -1  → NO MATCH (fallback to mode bits)
+ * Very conservative NFSv4 ACL reasoning:
+ * - If any DENY exists for the user → deny
+ * - If an explicit ALLOW exists → allow
  */
-static int check_nfs4_acl(struct passwd *pw, const char *path, char op) {
-    char cmd[PATH_MAX + 64];
+static int check_nfs4_acl(const char *user, const char *path, char op) {
+    char cmd[PATH_MAX + 32];
     snprintf(cmd, sizeof(cmd), "getfacl %s 2>/dev/null", path);
 
     FILE *fp = popen(cmd, "r");
     if (!fp)
-        return -1;
-
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        pclose(fp);
-        return -1;
-    }
+        return -1;  // unknown
 
     char line[512];
     int allow = 0;
 
     while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\n")] = 0;
-    
-        // 🔥 FIX: trim leading spaces
-        char *l = line;
-        while (*l == ' ' || *l == '\t')
-            l++;
+        if (strstr(line, "user:") && strstr(line, user)) {
+            if (strstr(line, ":deny")) {
+                if ((op == 'r' && strchr(line, 'r')) ||
+                    (op == 'w' && strchr(line, 'w')) ||
+                    (op == 'x' && strchr(line, 'x'))) {
+                    pclose(fp);
+                    return 0;  // explicit deny
+                }
+            }
 
-        // Skip comments
-        if (line[0] == '#')
-            continue;
-
-        char name[64], perms[64], flags[64], type[64];
-
-        // user:bob:rwx------:-------:allow
-        if (sscanf(line, "user:%63[^:]:%63[^:]:%63[^:]:%63s",
-                   name, perms, flags, type) == 4) {
-
-            if (strncmp(name, pw->pw_name, strlen(pw->pw_name)) != 0)
-                continue;
-        }
-        // group@:rwx------:-------:allow
-        else if (sscanf(line, "group@:%63[^:]:%63[^:]:%63s",
-                        perms, flags, type) == 3) {
-
-            if (pw->pw_gid != st.st_gid)
-                continue;
-        }
-        // everyone@:rwx------:-------:allow
-        else if (sscanf(line, "everyone@:%63[^:]:%63[^:]:%63s",
-                        perms, flags, type) == 3) {
-            // always applies
-        }
-        else {
-            continue;
-        }
-
-        // Check permission ONLY in perms field
-        int has_perm = 0;
-        if (op == 'r' && strchr(perms, 'r')) has_perm = 1;
-        if (op == 'w' && strchr(perms, 'w')) has_perm = 1;
-        if (op == 'x' && strchr(perms, 'x')) has_perm = 1;
-
-        if (!has_perm)
-            continue;
-
-        // DENY takes precedence
-        if (strcmp(type, "deny") == 0) {
-            pclose(fp);
-            return 0;
-        }
-
-        // ALLOW
-        if (strcmp(type, "allow") == 0) {
-            allow = 1;
+            if (strstr(line, ":allow")) {
+                if ((op == 'r' && strchr(line, 'r')) ||
+                    (op == 'w' && strchr(line, 'w')) ||
+                    (op == 'x' && strchr(line, 'x'))) {
+                    allow = 1;
+                }
+            }
         }
     }
 
     pclose(fp);
-
-    if (allow)
-        return 1;
-
-    return -1;   // no ACL decision
+    return allow;
 }
 
 int main(int argc, char *argv[]) {
@@ -151,19 +103,16 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int acl = check_nfs4_acl(pw, path, op);
-
+    int acl = check_nfs4_acl(user, path, op);
     if (acl == 0) {
         printf("Prediction: DENY (ACL deny)\n");
         return 0;
     }
-
     if (acl == 1) {
         printf("Prediction: ALLOW (ACL allow)\n");
         return 0;
     }
 
-    // fallback to mode bits
     if (check_mode_bits(pw->pw_uid, pw->pw_gid, &st, op)) {
         printf("Prediction: ALLOW (mode bits)\n");
     } else {
